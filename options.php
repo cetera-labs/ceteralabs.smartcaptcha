@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && check_bitrix_sessid()) {
     Option::set($module_id, 'smartcaptcha_label', trim($_POST['smartcaptcha_label'] ?? ''));
     Option::set($module_id, 'smartcaptcha_error', trim($_POST['smartcaptcha_error'] ?? ''));
     Option::set($module_id, 'active', (isset($_POST['active']) && $_POST['active'] === 'Y') ? 'Y' : 'N');
+    Option::set($module_id, 'smartcaptcha_lazy_load', (isset($_POST['smartcaptcha_lazy_load']) && $_POST['smartcaptcha_lazy_load'] === 'Y') ? 'Y' : 'N');
 
     echo '<div style="color: green; margin: 10px 0;">' . Loc::getMessage('CETERALABS_SMARTCAPTCHA_SAVED') . '</div>';
 }
@@ -22,6 +23,7 @@ $secretKey = Option::get($module_id, 'smartcaptcha_server_key', '');
 $label     = Option::get($module_id, 'smartcaptcha_label', '');
 $errorMsg  = Option::get($module_id, 'smartcaptcha_error', '');
 $active    = Option::get($module_id, 'active', 'N');
+$lazyLoad  = Option::get($module_id, 'smartcaptcha_lazy_load', 'N');
 ?>
 
 <form method="post">
@@ -31,6 +33,14 @@ $active    = Option::get($module_id, 'active', 'N');
             <td width="40%"><?= Loc::getMessage('CETERALABS_SMARTCAPTCHA_ACTIVE') ?>:</td>
             <td width="60%">
                 <input type="checkbox" name="active" value="Y" <?= ($active === 'Y' ? 'checked' : '') ?> />
+            </td>
+        </tr>
+        <tr>
+            <td width="40%">
+                <?= Loc::getMessage('CETERALABS_SMARTCAPTCHA_LAZY_LOAD') ?>:
+            </td>
+            <td width="60%">
+                <input type="checkbox" name="smartcaptcha_lazy_load" value="Y" <?= ($lazyLoad === 'Y' ? 'checked' : '') ?> />
             </td>
         </tr>
         <tr>
