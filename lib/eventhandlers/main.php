@@ -370,7 +370,7 @@ class Main
         $ok = SmartCaptcha::verify($token);
 
         if (!$ok) {
-            $msg = self::errorText();
+            $msg = htmlspecialcharsbx(self::errorText());
             $APPLICATION->ResetException();
             $APPLICATION->ThrowException($msg);
             return false;
