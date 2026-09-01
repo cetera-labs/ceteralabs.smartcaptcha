@@ -424,12 +424,27 @@ class Main
         }
 
         $label       = trim(Option::get(self::MODULE_ID, 'smartcaptcha_label', '')) ?: Loc::getMessage('CETERALABS_SMARTCAPTCHA_LABEL');
-        $defaultErrs = @unserialize(Loc::getMessage('CETERALABS_SMARTCAPTCHA_DEFAULT_ERRORS')) ?: [];
+        $defaultErrs = @unserialize(Loc::getMessage('CETERALABS_SMARTCAPTCHA_DEFAULT_ERRORS'), ['allowed_classes' => false]);
+
+        if (!is_array($defaultErrs)) {
+            $defaultErrs = [];
+        }
+
         $customErr   = self::errorText();
 
         $content = preg_replace('/<img[^>]+captcha\.php[^>]+>/i', '', $content);
-        $content = preg_replace('/Введите[^<]*(картинке|символы)[^<]*/iu', $label, $content);
-        $content = str_replace($defaultErrs, $customErr, $content);
+        $safeLabel = htmlspecialcharsbx($label);
+        $safeCustomErr = htmlspecialcharsbx($customErr);
+
+        $content = preg_replace_callback(
+            '/Введите[^<]*(картинке|символы)[^<]*/iu',
+            static function () use ($safeLabel) {
+                return $safeLabel;
+            },
+            $content
+        );
+
+        $content = str_replace($defaultErrs, $safeCustomErr, $content);
 
         $isAjax = self::isAjaxRequest();
 
