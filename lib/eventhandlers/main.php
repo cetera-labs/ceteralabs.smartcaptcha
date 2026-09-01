@@ -21,6 +21,42 @@ class Main
             || (strtolower((string)$request->getHeader('X-Requested-With')) === 'xmlhttprequest');
     }
 
+    protected static function responseContentType(): string
+    {
+        $contentType = '';
+
+        foreach (array_reverse(headers_list()) as $header) {
+            if (stripos($header, 'Content-Type:') === 0) {
+                $contentType = trim(substr($header, strlen('Content-Type:')));
+                break;
+            }
+        }
+
+        if ($contentType === '') {
+            try {
+                $response = Application::getInstance()->getContext()->getResponse();
+                $value = $response->getHeaders()->get('Content-Type');
+
+                if (is_array($value)) {
+                    $value = end($value);
+                }
+
+                $contentType = trim((string) $value);
+            } catch (\Throwable $e) {
+                return '';
+            }
+        }
+
+        return strtolower(trim(explode(';', $contentType, 2)[0]));
+    }
+
+    protected static function isExplicitNonHtmlResponse(): bool
+    {
+        $contentType = self::responseContentType();
+
+        return $contentType !== '' && !in_array($contentType, ['text/html', 'application/xhtml+xml'], true);
+    }
+
     protected static function isLazyLoadEnabled(): bool
     {
         return Option::get(self::MODULE_ID, 'smartcaptcha_lazy_load', 'N') === 'Y';
@@ -358,6 +394,10 @@ class Main
     public static function OnEndBufferContent(&$content)
     {
         if (defined('ADMIN_SECTION') || !SmartCaptcha::checkSmartcaptchaActive()) {
+            return;
+        }
+
+        if (self::isExplicitNonHtmlResponse()) {
             return;
         }
 
