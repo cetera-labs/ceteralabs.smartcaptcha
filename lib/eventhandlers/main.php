@@ -17,8 +17,8 @@ class Main
     protected static function isAjaxRequest(?HttpRequest $request = null): bool
     {
         $request ??= Application::getInstance()->getContext()->getRequest();
-        return ((string)$request->get('bxajaxid') !== '')
-            || (strtolower((string)$request->getHeader('X-Requested-With')) === 'xmlhttprequest');
+        return ((string) $request->get('bxajaxid') !== '')
+            || (strtolower((string) $request->getHeader('X-Requested-With')) === 'xmlhttprequest');
     }
 
     protected static function responseContentType(): string
@@ -65,7 +65,7 @@ class Main
     protected static function currentBxAjaxId(?HttpRequest $request = null): string
     {
         $request ??= Application::getInstance()->getContext()->getRequest();
-        $id = (string)$request->get('bxajaxid');
+        $id = (string) $request->get('bxajaxid');
         return $id ? preg_replace('~[^a-z0-9_]~i', '', $id) : '';
     }
 
@@ -83,7 +83,7 @@ class Main
         $css = '<style>.smart-captcha{display:block;min-height:102px}' .
             '.smart-captcha[style*="height: 0px"]{height:auto!important;min-height:102px!important}</style>';
 
-        $js  = '<script data-skip-moving="true">(function(){' .
+        $js = '<script data-skip-moving="true">(function(){' .
             'function renderAll(){var w=window.parent||window,d=w.document,sc=w.smartCaptcha;' .
             'if(!(sc&&typeof sc.render==="function")){setTimeout(renderAll,100);return;}' .
             'var root=' . $rootExpr . ';' .
@@ -100,6 +100,7 @@ class Main
     protected static function lazyInlineInit(string $bxId = ''): string
     {
         $rootExpr = $bxId ? 'd.getElementById("comp_' . \CUtil::JSEscape($bxId) . '")||d' : 'd';
+        $validationMessage = json_encode(self::errorText(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '"Подтвердите, что вы не робот."';
 
         $js = <<<'JS'
         <script data-skip-moving="true">
@@ -115,6 +116,7 @@ class Main
             }
 
             var d = w.document;
+            var validationMessage = __CETERALABS_SMARTCAPTCHA_VALIDATION_MESSAGE__;
 
             function createManager() {
                 var apiPromise = null;
@@ -201,7 +203,20 @@ class Main
                         }
 
                         if (!container.querySelector('iframe')) {
-                            w.smartCaptcha.render(container, {sitekey: siteKey});
+                            w.smartCaptcha.render(container, {
+                                sitekey: siteKey,
+                                callback: function (token) {
+                                    if (typeof token !== 'string' || token.trim() === '') {
+                                        return;
+                                    }
+
+                                    var form = container.closest('form');
+
+                                    if (form) {
+                                        clearValidationError(form);
+                                    }
+                                }
+                            });
                         }
 
                         container.setAttribute('data-ceteralabs-smartcaptcha-state', 'rendered');
@@ -304,8 +319,71 @@ class Main
                     }
                 }
 
+                function hasCaptchaToken(form) {
+                    var token = form.querySelector('[name="smart-token"]');
+
+                    return !!(token && typeof token.value === 'string' && token.value.trim() !== '');
+                }
+
+                function clearValidationError(form) {
+                    if (!form || typeof form.querySelectorAll !== 'function') {
+                        return;
+                    }
+
+                    var errors = form.querySelectorAll('[data-ceteralabs-smartcaptcha-validation-error]');
+
+                    for (var i = 0; i < errors.length; i++) {
+                        if (errors[i].parentNode) {
+                            errors[i].parentNode.removeChild(errors[i]);
+                        }
+                    }
+                }
+
+                function showValidationError(form, container) {
+                    if (!form || !container) {
+                        return;
+                    }
+
+                    clearValidationError(form);
+
+                    var error = d.createElement('div');
+                    error.className = 'smart-captcha-validation-error';
+                    error.setAttribute('data-ceteralabs-smartcaptcha-validation-error', 'Y');
+                    error.setAttribute('role', 'alert');
+                    error.textContent = validationMessage;
+
+                    if (container.parentNode) {
+                        container.parentNode.insertBefore(error, container.nextSibling);
+                    }
+                }
+
+                function handleSubmit(event) {
+                    var form = event.target;
+
+                    if (!form || form.tagName !== 'FORM') {
+                        return;
+                    }
+
+                    var containers = getContainers(form);
+
+                    if (!containers.length) {
+                        return;
+                    }
+
+                    if (hasCaptchaToken(form)) {
+                        clearValidationError(form);
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    renderScope(form);
+                    showValidationError(form, containers[0]);
+                }
+
                 d.addEventListener('focusin', handleInteraction, true);
                 d.addEventListener('pointerdown', handleInteraction, true);
+                d.addEventListener('submit', handleSubmit, true);
 
                 if (w.BX && typeof w.BX.addCustomEvent === 'function') {
                     w.BX.addCustomEvent('onAjaxSuccess', function () {
@@ -326,13 +404,25 @@ class Main
                 w.CeteralabsSmartCaptchaLazy = manager;
             }
 
-            var root = __CETERALABS_SMARTCAPTCHA_ROOT__;
-            manager.register(root);
+            function registerRoot() {
+                var root = __CETERALABS_SMARTCAPTCHA_ROOT__;
+                manager.register(root);
+            }
+
+            if (d.readyState === 'loading') {
+                d.addEventListener('DOMContentLoaded', registerRoot, {once: true});
+            } else {
+                registerRoot();
+            }
         })(window);
         </script>
         JS;
 
-        return str_replace('__CETERALABS_SMARTCAPTCHA_ROOT__', $rootExpr, $js);
+        return str_replace(
+            ['__CETERALABS_SMARTCAPTCHA_ROOT__', '__CETERALABS_SMARTCAPTCHA_VALIDATION_MESSAGE__'],
+            [$rootExpr, $validationMessage],
+            $js
+        );
     }
 
     public static function OnPageStart()
@@ -359,9 +449,9 @@ class Main
     {
         global $APPLICATION;
 
-        $source     = $request->isPost() ? 'getPost' : 'getQuery';
+        $source = $request->isPost() ? 'getPost' : 'getQuery';
         $captchaSid = $request->$source('captcha_sid') ?: $request->$source('captcha_code');
-        $token      = $request->getPost('smart-token');
+        $token = $request->getPost('smart-token');
 
         if (!$captchaSid || !$token) {
             return true;
@@ -377,7 +467,7 @@ class Main
         }
 
         $connection = Application::getConnection();
-        $sqlHelper  = $connection->getSqlHelper();
+        $sqlHelper = $connection->getSqlHelper();
 
         $connection->queryExecute(sprintf(
             'UPDATE b_captcha SET CODE=%s WHERE ID=%s',
@@ -385,7 +475,7 @@ class Main
             $sqlHelper->convertToDbString($captchaSid)
         ));
 
-        $_POST['captcha_word']    = 'OK';
+        $_POST['captcha_word'] = 'OK';
         $_REQUEST['captcha_word'] = 'OK';
 
         return true;
@@ -423,14 +513,14 @@ class Main
             return;
         }
 
-        $label       = trim(Option::get(self::MODULE_ID, 'smartcaptcha_label', '')) ?: Loc::getMessage('CETERALABS_SMARTCAPTCHA_LABEL');
+        $label = trim(Option::get(self::MODULE_ID, 'smartcaptcha_label', '')) ?: Loc::getMessage('CETERALABS_SMARTCAPTCHA_LABEL');
         $defaultErrs = @unserialize(Loc::getMessage('CETERALABS_SMARTCAPTCHA_DEFAULT_ERRORS'), ['allowed_classes' => false]);
 
         if (!is_array($defaultErrs)) {
             $defaultErrs = [];
         }
 
-        $customErr   = self::errorText();
+        $customErr = self::errorText();
 
         $content = preg_replace('/<img[^>]+captcha\.php[^>]+>/i', '', $content);
         $safeLabel = htmlspecialcharsbx($label);
@@ -451,7 +541,8 @@ class Main
         if (self::isLazyLoadEnabled()) {
             $style = '<style data-skip-moving="true">.smart-captcha{display:block;min-height:102px;}' .
                 'td .smart-captcha{min-height:102px;line-height:normal;}' .
-                '.smart-captcha[style*="height: 0px"]{height:auto!important;min-height:102px!important}</style>';
+                '.smart-captcha[style*="height: 0px"]{height:auto!important;min-height:102px!important}' .
+                '.smart-captcha-validation-error{display:block;margin-top:8px;line-height:1.35;}</style>';
             $lazyInit = self::lazyInlineInit($isAjax ? self::currentBxAjaxId() : '');
 
             if ($isAjax) {
@@ -469,7 +560,7 @@ class Main
             $content = self::ajaxInlineInit(self::currentBxAjaxId()) . $content;
         } else {
             $script = '<script src="https://smartcaptcha.yandexcloud.net/captcha.js" async defer></script>';
-            $style  = '<style data-skip-moving="true">.smart-captcha{display:block;min-height:102px;}td .smart-captcha{min-height:102px;line-height:normal;}</style>';
+            $style = '<style data-skip-moving="true">.smart-captcha{display:block;min-height:102px;}td .smart-captcha{min-height:102px;line-height:normal;}</style>';
 
             if (stripos($content, '</head>') !== false) {
                 $content = preg_replace('/<\/head>/i', ($script . $style) . '</head>', $content, 1);
