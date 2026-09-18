@@ -14,6 +14,9 @@ class Main
 {
     const MODULE_ID = 'ceteralabs.smartcaptcha';
 
+    private const CAPTCHA_SESSION_KEY = 'CETERALABS_SMARTCAPTCHA_SIDS';
+    private const CAPTCHA_SESSION_LIMIT = 100;
+
     protected static function isAjaxRequest(?HttpRequest $request = null): bool
     {
         $request ??= Application::getInstance()->getContext()->getRequest();
@@ -74,6 +77,89 @@ class Main
         return trim(Option::get(self::MODULE_ID, 'smartcaptcha_error', ''))
             ?: Loc::getMessage('CETERALABS_SMARTCAPTCHA_ERROR')
             ?: 'Подтвердите, что вы не робот.';
+    }
+
+    protected static function normalizeCaptchaSid($value): string
+    {
+        if (!is_scalar($value)) {
+            return '';
+        }
+
+        $sid = trim((string) $value);
+
+        if ($sid === '' || strlen($sid) > 128 || !preg_match('/^[A-Za-z0-9_-]+$/D', $sid)) {
+            return '';
+        }
+
+        return $sid;
+    }
+
+    protected static function rememberCaptchaSids(string $content): void
+    {
+        if (!preg_match_all(
+            '/<input\b(?=[^>]*\bname\s*=\s*["\'](?:captcha_sid|captcha_code)["\'])[^>]*\bvalue\s*=\s*["\']([^"\']+)["\'][^>]*>/iu',
+            $content,
+            $matches
+        )) {
+            return;
+        }
+
+        $newSids = [];
+
+        foreach ($matches[1] as $value) {
+            $sid = self::normalizeCaptchaSid(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+            if ($sid !== '') {
+                $newSids[] = $sid;
+            }
+        }
+
+        if (!$newSids) {
+            return;
+        }
+
+        $session = Application::getInstance()->getSession();
+        $stored = $session->get(self::CAPTCHA_SESSION_KEY);
+
+        if (!is_array($stored)) {
+            $stored = [];
+        }
+
+        $stored = array_values(array_unique(array_merge($stored, $newSids)));
+
+        if (count($stored) > self::CAPTCHA_SESSION_LIMIT) {
+            $stored = array_slice($stored, -self::CAPTCHA_SESSION_LIMIT);
+        }
+
+        $session->set(self::CAPTCHA_SESSION_KEY, $stored);
+    }
+
+    protected static function captchaSidBelongsToSession(string $captchaSid): bool
+    {
+        $stored = Application::getInstance()->getSession()->get(self::CAPTCHA_SESSION_KEY);
+        return is_array($stored) && in_array($captchaSid, $stored, true);
+    }
+
+    protected static function setCaptchaWord(HttpRequest $request, string $word): void
+    {
+        $_POST['captcha_word'] = $word;
+        $_GET['captcha_word'] = $word;
+        $_REQUEST['captcha_word'] = $word;
+
+        $request->getPostList()->set('captcha_word', $word);
+        $request->getQueryList()->set('captcha_word', $word);
+    }
+
+    protected static function rejectSmartCaptcha(HttpRequest $request): bool
+    {
+        global $APPLICATION;
+
+        self::setCaptchaWord($request, '__CETERALABS_SMARTCAPTCHA_INVALID__');
+
+        $APPLICATION->ResetException();
+        $APPLICATION->ThrowException(htmlspecialcharsbx(self::errorText(), ENT_QUOTES));
+
+        return false;
     }
 
     protected static function ajaxInlineInit(string $bxId = ''): string
@@ -453,36 +539,43 @@ class Main
 
     protected static function checkSmartCaptcha(HttpRequest $request): bool
     {
-        global $APPLICATION;
+        $hasCaptchaSid = array_key_exists('captcha_sid', $_REQUEST) || array_key_exists('captcha_code', $_REQUEST);
 
-        $source = $request->isPost() ? 'getPost' : 'getQuery';
-        $captchaSid = $request->$source('captcha_sid') ?: $request->$source('captcha_code');
-        $token = $request->getPost('smart-token');
-
-        if (!$captchaSid || !$token) {
+        if (!$hasCaptchaSid) {
             return true;
         }
 
-        $ok = SmartCaptcha::verify($token);
+        $captchaSid = self::normalizeCaptchaSid($_REQUEST['captcha_sid'] ?? $_REQUEST['captcha_code'] ?? null);
 
-        if (!$ok) {
-            $msg = htmlspecialcharsbx(self::errorText());
-            $APPLICATION->ResetException();
-            $APPLICATION->ThrowException($msg);
-            return false;
+        if ($captchaSid === '') {
+            return self::rejectSmartCaptcha($request);
+        }
+
+        if (!self::captchaSidBelongsToSession($captchaSid)) {
+            return self::rejectSmartCaptcha($request);
+        }
+
+        $tokenValue = $_REQUEST['smart-token'] ?? null;
+        $token = is_scalar($tokenValue) ? trim((string) $tokenValue) : '';
+
+        if ($token === '') {
+            return self::rejectSmartCaptcha($request);
+        }
+
+        if (!SmartCaptcha::verify($token)) {
+            return self::rejectSmartCaptcha($request);
         }
 
         $connection = Application::getConnection();
         $sqlHelper = $connection->getSqlHelper();
 
-        $connection->queryExecute(sprintf(
-            'UPDATE b_captcha SET CODE=%s WHERE ID=%s',
-            $sqlHelper->convertToDbString('OK'),
-            $sqlHelper->convertToDbString($captchaSid)
-        ));
+        $captchaCode = $connection->queryScalar('SELECT CODE FROM b_captcha WHERE ID=' . $sqlHelper->convertToDbString($captchaSid));
 
-        $_POST['captcha_word'] = 'OK';
-        $_REQUEST['captcha_word'] = 'OK';
+        if (!is_string($captchaCode) || $captchaCode === '') {
+            return self::rejectSmartCaptcha($request);
+        }
+
+        self::setCaptchaWord($request, $captchaCode);
 
         return true;
     }
@@ -518,6 +611,8 @@ class Main
         if ($replacementCount === 0) {
             return;
         }
+
+        self::rememberCaptchaSids($content);
 
         $label = trim(Option::get(self::MODULE_ID, 'smartcaptcha_label', '')) ?: Loc::getMessage('CETERALABS_SMARTCAPTCHA_LABEL');
         $defaultErrs = @unserialize(Loc::getMessage('CETERALABS_SMARTCAPTCHA_DEFAULT_ERRORS'), ['allowed_classes' => false]);
