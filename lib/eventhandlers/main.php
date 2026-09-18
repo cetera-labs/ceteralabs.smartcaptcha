@@ -320,9 +320,15 @@ class Main
                 }
 
                 function hasCaptchaToken(form) {
-                    var token = form.querySelector('[name="smart-token"]');
+                    var tokens = form.querySelectorAll('[name="smart-token"]');
 
-                    return !!(token && typeof token.value === 'string' && token.value.trim() !== '');
+                    for (var i = 0; i < tokens.length; i++) {
+                        if (typeof tokens[i].value === 'string' && tokens[i].value.trim() !== '') {
+                            return true;
+                        }
+                    }
+
+                    return false;
                 }
 
                 function clearValidationError(form) {
