@@ -100,7 +100,7 @@ class Main
     protected static function lazyInlineInit(string $bxId = ''): string
     {
         $rootExpr = $bxId ? 'd.getElementById("comp_' . \CUtil::JSEscape($bxId) . '")||d' : 'd';
-        $validationMessage = json_encode(self::errorText(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '"Подтвердите, что вы не робот."';
+        $validationMessage = json_encode(self::errorText(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?: '"Подтвердите, что вы не робот."';
 
         $js = <<<'JS'
         <script data-skip-moving="true">
@@ -523,8 +523,8 @@ class Main
         $customErr = self::errorText();
 
         $content = preg_replace('/<img[^>]+captcha\.php[^>]+>/i', '', $content);
-        $safeLabel = htmlspecialcharsbx($label);
-        $safeCustomErr = htmlspecialcharsbx($customErr);
+        $safeLabel = htmlspecialcharsbx($label, ENT_QUOTES);
+        $safeCustomErr = htmlspecialcharsbx($customErr, ENT_QUOTES);
 
         $content = preg_replace_callback(
             '/Введите[^<]*(картинке|символы)[^<]*/iu',
